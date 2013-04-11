@@ -2,7 +2,7 @@
 /**
  * MorrayBehavior (Model to Array Behavior)
  *
- * ver 1.0
+ * ver 1.0 | https://github.com/Arne-S/Morray
  *
  * Converts an AR model to an array, retaining associated relations.
  *
@@ -10,127 +10,118 @@
 
 class MorrayBehavior extends CBehavior
 {
-    public function toArray(Array $options = array())
-    {
-        //option 'scenario', use a scenario to only display safe attributes
-        //default: empty (no scenario)
-        if (!isset($options['scenario'])) $options['scenario'] = "";
 
-        //option 'virtAttr', key name of the array holding the relations
-        if (!isset($options['virtAttr'])) $options['virtAttr'] = array();
+  public function toArray($opts=array())
+  {
+      // option 'scenario', use a scenario to only display safe attributes
+      // default: empty (no scenario)
+      if (!isset($opts['scenario'])) $opts['scenario'] = "";
 
-        //get the owner class
-        $owner = $this->getOwner();
+      // option 'relname', key name of the array holding the relations
+      // use empty string to use no new array for relations
+      if (!isset($opts['relname'])) $opts['relname'] = "";
 
-        //check if the owner class is an AR class
-        if (is_subclass_of($owner, 'CActiveRecord')) {
+      // get the owner class
+      $owner = $this->getOwner();
 
-            //return the result by calling the recursive function
-            return $this->loop($owner, $options);
-        }
+      // check if the owner class is an AR class
+      if (is_subclass_of($owner, 'CActiveRecord')) {
 
-        return false;
-    }
+          // this function recursively loops all attributes and relations of a supplied object 
+          // return the result by calling the recursive function
+          return $this->loop($owner, $opts);
+      }
 
-    private function loop($obj, $options = array(), $arr = array())
-    {
-        //store current object attribute values
-        $attributes = $obj->attributes;
+      return false;
+  }
 
-        //check if user supplied a scenario, and if this object has any rules
-        if ((!empty($options['scenario'])) && (is_array($obj->rules()))) {
+  public function loop($obj, $opts = array(), $arr = array())
+  {
+      // store current object attribute values
+      $attributes = $obj->attributes;
 
-            //loop the rules, search for a matching scenario
-            foreach ($obj->rules() as $rule) {
+      // check if user supplied a scenario, and if this object has any rules
+      if ((!empty($opts['scenario'])) && (is_array($obj->rules()))) {
 
-                //check if this scenario name matches the supplied one
-                if ((isset($rule['on']) && ($rule['on'] == $options['scenario']))) {
+          // loop the rules, search for a matching scenario
+          foreach ($obj->rules() as $rule) {
 
-                    //check if this is the 'safe' option
-                    if ((isset($rule[1])) && ($rule[1] == "safe")) {
+              // check if this scenario name matches the supplied one
+              if (isset($rule['on']) && $rule['on'] == $opts['scenario']) {
 
-                        //put the safe attributes in an array
-                        $safe_attributes = explode(",", $rule[0]);
+                  // check if this is the 'safe' option
+                  if (isset($rule[1]) && $rule[1] == "safe") {
 
-                        //new array for putting only the values of the safe attributes
-                        $attributes_values = array();
+                      // put the safe attributes in an array
+                      $safe_attributes = explode(",", $rule[0]);
 
-                        //loop the safe attributes
-                        foreach ($safe_attributes as $safe_attribute) {
+                      // new array for putting only the values of the safe attributes
+                      $attributes_values = array();
 
-                            //trim in case there are any spaces
-                            $safe_attribute = trim($safe_attribute);
+                      // loop the safe attributes
+                      foreach ($safe_attributes as $safe_attribute) {
 
-                            //if this safe attribute contains a value, save it in the new attribute array
-                            if (isset($attributes[$safe_attribute])) {
-                                $attributes_values[$safe_attribute] = $attributes[$safe_attribute];
-                            }
-                        }
+                          // trim in case there are any spaces
+                          $safe_attribute = trim($safe_attribute);
 
-                        // check for virtual attributes
-                        if (!empty($options['virtAttr'])) {
+                          // get attribute from object
+                          $attributes_values[$safe_attribute] = $obj->{$safe_attribute};
+                      }
+                      // assign the safe attributes over the the array containing all the attributes
+                      $attributes = $attributes_values;
+                  }
+              }
+          }
+      }
 
-                            // is there a method defined within virtual attributes?
-                            if (isset($options['virtAttr'][get_class($obj)])) {
+      //  assign the attributes of current rel to array
+      $arr = $attributes;
 
-                                // loop all virtual attributes
-                                foreach ($options['virtAttr'][get_class($obj)] as $key => $func) {
+      // get relations from current rel
+      $relations = $obj->relations();
 
-                                    // check if supplied function exists on current object
-                                    if (method_exists($obj, $func)) {
+      // put the keys (rel names) in an array
+      if ($rel_ids = array_keys($relations)) {
 
-                                        // execute function and add to attribute values
-                                        $attributes_values[$key] = $obj->$func();
-                                    }
-                                }
-                            }
-                        }
+          // loop relations
+          foreach ($rel_ids as $rel_id) {
 
-                        //assign the safe attributes over the the array containing all the attributes
-                        $attributes = $attributes_values;
-                    }
-                }
-            }
-        }
+              // check if sub rel is loaded (using scopes or 'with')
+              if ($obj->hasRelated($rel_id)) {
+                  $rel = $obj->{$rel_id};
 
-        // assign the attributes of current relation to array
-        $arr = $attributes;
+                  // if sub rel is an object, there is 1 rel being returned
+                  if (is_object($rel)) {
 
-        //get relations from current relation
-        $relations = $obj->relations();
+                      // if relname is supplied, use that to store the rel in
+                      if (!empty($opts['relname'])) {
+                          $arr[$opts['relname']][$rel_id] = $this->loop($rel, $opts, $arr);
+                      }
+                      else {
+                          // if no relname is supplied, store directly in current array
+                          $arr[$rel_id] = $this->loop($rel, $opts, $arr);
+                      }
+                  }
 
-        //put the keys (relation names) in an array
-        if ($relation_ids = array_keys($relations)) {
+                  // if sub rel is an array, there are multiple relations being returned
+                  if (is_array($rel)) {
 
-            //loop relations
-            foreach ($relation_ids as $relation_id) {
+                      // do a foreach on each sub rel
+                      foreach ($rel as $sub_rel) {
 
-                //check if sub relation is loaded (using scopes or 'with')
-                if ($obj->hasRelated($relation_id)) {
-                    $relation = $obj->{$relation_id};
-
-                    //if sub relation is an object, there is 1 relation being returned
-                    if (is_object($relation)) $arr[$relation_id] = $this->loop($relation, $options, $arr);
-
-                    //if sub relation is an array, there are multiple relations being returned
-                    if (is_array($relation)) {
-
-                        //do a foreach on each sub relation
-                        foreach ($relation as $sub_relation) {
-
-                            //if relname is supplied, use that to store the relation in
-                            if (!empty($options['relname'])) {
-                                $arr[$options['relname']][$relation_id][] = $this->loop($sub_relation, $options, $arr);
-                            }
-                            else {
-                                //if no relname is supplied, store directly in current array
-                                $arr[$relation_id][] = $this->loop($sub_relation, $options, $arr);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return $arr;
-    }
+                          // if relname is supplied, use that to store the rel in
+                          if (!empty($opts['relname'])) {
+                              $arr[$opts['relname']][$rel_id][] = $this->loop($sub_rel, $opts, $arr);
+                          }
+                          else {
+                              // if no relname is supplied, store directly in current array
+                              $arr[$rel_id][] = $this->loop($sub_rel, $opts, $arr);
+                          }
+                      }
+                  }
+              }
+          }
+      }
+      return $arr;
+  }
 }
